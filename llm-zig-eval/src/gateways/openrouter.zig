@@ -134,7 +134,7 @@ pub const Client = struct {
         defer self.allocator.free(auth_header);
 
         // Prepare response body buffer
-        var response_body = std.io.Writer.Allocating.init(self.allocator);
+        var response_body = std.ArrayList(u8).init(self.allocator);
         errdefer response_body.deinit();
 
         // Use fetch API - Zig 0.15 style
@@ -148,7 +148,7 @@ pub const Client = struct {
                 .{ .name = "X-Title", .value = "llm-zig-eval" },
             },
             .payload = body,
-            .response_writer = &response_body.writer,
+            .response_writer = response_body.writer().any(),
         }) catch |err| {
             return err;
         };
