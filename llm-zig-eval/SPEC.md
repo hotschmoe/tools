@@ -102,6 +102,31 @@ llm-zig-eval/
 
 ---
 
+## Dependencies
+
+### rich_zig
+
+We use [rich_zig](https://github.com/hotschmoe/rich_zig) for terminal output formatting.
+
+**Why?** This tool can run for 60+ seconds. Users shouldn't stare at a silent terminal wondering if it's frozen. We provide:
+
+- **Progress bars** — Per-model and per-problem progress tracking
+- **Spinners** — Visual feedback during API calls and compilation
+- **Styled tables** — Colored, formatted result tables
+- **Status messages** — Real-time updates on what's happening
+
+**Example UX Flow:**
+```
+🔄 Fetching anthropic/claude-3.5-sonnet...
+   ├── Problem 1: Arena Allocator ████████░░ 80%
+   ├── Problem 2: Mock Socket     ██████████ ✓
+   └── Problem 3: JSON Parser     ░░░░░░░░░░ pending
+
+⏱️  Elapsed: 12.3s | Est. remaining: 8.2s
+```
+
+---
+
 ## Benchmark Problems (The Gauntlet)
 
 Three problems test core Zig competencies. Each includes a text prompt and a test harness.
@@ -344,3 +369,4 @@ OPENROUTER_API_KEY=sk-or-v1-...
 - [ ] Multiple runs per problem
 - [ ] Result caching
 - [ ] Historical comparison
+- [ ] test giving a semantic search indexed info for zig v0.15.2 so older models can have access to updated features and syntax in zig that may have missed their training (and stop the model from searching the web and wasting tokens)

@@ -1,23 +1,52 @@
-//! By convention, root.zig is the root source file when making a library.
+//! llm-zig-eval library root
+//! Exports all modules for library usage.
+
 const std = @import("std");
 
-pub fn bufferedPrint() !void {
-    // Stdout is for the actual output of your application, for example if you
-    // are implementing gzip, then only the compressed bytes should be sent to
-    // stdout, not any debugging messages.
-    var stdout_buffer: [1024]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
-    const stdout = &stdout_writer.interface;
+// Core modules
+pub const config = @import("config.zig");
+pub const parser = @import("core/parser.zig");
+pub const sandbox = @import("core/sandbox.zig");
+pub const tokens = @import("core/tokens.zig");
+pub const reporter = @import("core/reporter.zig");
 
-    try stdout.print("Run `zig build test` to run the tests.\n", .{});
+// Gateway modules
+pub const openrouter = @import("gateways/openrouter.zig");
 
-    try stdout.flush(); // Don't forget to flush!
+// Council modules
+pub const council_types = @import("council/types.zig");
+pub const tribunal = @import("council/tribunal.zig");
+pub const prompts = @import("council/prompts.zig");
+
+// Re-export commonly used types
+pub const Config = config.Config;
+pub const ModelCost = config.ModelCost;
+pub const Client = openrouter.Client;
+pub const Message = openrouter.Message;
+pub const ChatResponse = openrouter.ChatResponse;
+pub const TokenUsage = tokens.TokenUsage;
+pub const Report = reporter.Report;
+pub const ModelResult = reporter.ModelResult;
+pub const ProblemResult = reporter.ProblemResult;
+pub const Sandbox = sandbox.Sandbox;
+pub const SandboxResult = sandbox.SandboxResult;
+pub const Problem = sandbox.Problem;
+pub const PROBLEMS = sandbox.PROBLEMS;
+
+// Tests
+test "module imports" {
+    // Verify all imports work
+    _ = config;
+    _ = parser;
+    _ = sandbox;
+    _ = tokens;
+    _ = reporter;
+    _ = openrouter;
+    _ = council_types;
+    _ = tribunal;
+    _ = prompts;
 }
 
-pub fn add(a: i32, b: i32) i32 {
-    return a + b;
-}
-
-test "basic add functionality" {
-    try std.testing.expect(add(3, 7) == 10);
+test "all module tests" {
+    std.testing.refAllDecls(@This());
 }

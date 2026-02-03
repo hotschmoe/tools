@@ -15,6 +15,11 @@ Determine which model produces the highest-quality Zig code, with cost as a seco
 - **Automated Evaluation** — Compile, test, and measure each solution
 - **Council of Judges** — Multi-model consensus scoring to eliminate bias
 - **Cost Tracking** — Per-request token usage and dollar costs
+- **Rich Terminal UI** — Live progress bars, spinners, and formatted tables via [rich_zig](https://github.com/hotschmoe/rich_zig)
+
+## Dependencies
+
+- [rich_zig](https://github.com/hotschmoe/rich_zig) — Terminal formatting, progress indicators, and styled output
 
 ## Quick Start
 
