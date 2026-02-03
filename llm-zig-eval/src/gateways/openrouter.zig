@@ -155,6 +155,12 @@ pub const Client = struct {
 
         // Check status code
         if (result.status != .ok) {
+            std.debug.print("HTTP Error: {d} ({s})\n", .{ @intFromEnum(result.status), @tagName(result.status) });
+            // Print response body for debugging
+            const body_slice = response_writer.written();
+            if (body_slice.len > 0) {
+                std.debug.print("Response: {s}\n", .{body_slice[0..@min(body_slice.len, 500)]});
+            }
             return switch (result.status) {
                 .unauthorized => ApiError.ApiUnauthorized,
                 .too_many_requests => ApiError.ApiRateLimited,

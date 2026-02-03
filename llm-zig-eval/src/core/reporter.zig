@@ -12,6 +12,7 @@ pub const ProblemResult = struct {
     status: sandbox.SandboxResult.Status,
     response_time_ms: i64,
     loc: usize,
+    retries: u32 = 0, // Number of error retries used
 };
 
 /// Aggregated result for a model across all problems
@@ -113,9 +114,14 @@ pub const Report = struct {
                     .test_error => "✗ test",
                     .timeout => "⏱ timeout",
                 };
-                try writer.print("║   └─ {s:<20} {s:<10}                                   ║\n", .{
+                const retry_str = if (prob.retries > 0) blk: {
+                    var buf: [16]u8 = undefined;
+                    break :blk std.fmt.bufPrint(&buf, "(retries:{d})", .{prob.retries}) catch "";
+                } else "";
+                try writer.print("║   └─ {s:<20} {s:<10} {s:<12}                     ║\n", .{
                     prob.problem_name,
                     status_icon,
+                    retry_str,
                 });
             }
         }

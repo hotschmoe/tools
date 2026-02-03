@@ -148,53 +148,95 @@ fn runModelBenchmark(
         var best_loc: usize = 0;
         var best_code: ?[]const u8 = null;
         var problem_time_ms: i64 = 0;
+        var retries_used: u32 = 0;
+
+        const MAX_RETRIES: u32 = 4;
+        const system_prompt =
+            \\You are an expert Zig 0.15 programmer. Provide only the requested code in a single ```zig code block. No explanations outside the code.
+            \\
+            \\CRITICAL Zig 0.15 API Notes:
+            \\- All exported types/functions must be `pub`
+            \\- Use `std.Thread.sleep(ns)` not `std.time.sleep()`
+            \\- Use `@typeInfo(T).@"struct".fields` not `.Struct.fields`
+            \\- ArrayList uses `.empty` init: `var list: std.ArrayList(u8) = .empty;`
+            \\- ArrayList methods take allocator: `list.append(allocator, item)`
+        ;
 
         for (0..runs) |_| {
-            // Send to LLM
-            const messages = [_]Message{
-                .{
-                    .role = .system,
-                    .content = "You are an expert Zig programmer. Provide only the requested code in a single ```zig code block. No explanations outside the code.",
-                },
-                .{
-                    .role = .user,
-                    .content = prompt,
-                },
-            };
+            // Build conversation for retry loop
+            var conversation: std.ArrayList(Message) = .empty;
+            defer conversation.deinit(allocator);
 
-            var response = try client.sendChatCompletion(model_id, &messages);
-            defer response.deinit(allocator);
+            // Initial messages
+            try conversation.append(allocator, .{ .role = .system, .content = system_prompt });
+            try conversation.append(allocator, .{ .role = .user, .content = prompt });
 
-            problem_time_ms += response.response_time_ms;
-            total_usage.add(.{
-                .prompt_tokens = response.usage.prompt_tokens,
-                .completion_tokens = response.usage.completion_tokens,
-                .total_tokens = response.usage.total_tokens,
-            });
+            var retry: u32 = 0;
+            while (retry < MAX_RETRIES) : (retry += 1) {
+                var response = try client.sendChatCompletion(model_id, conversation.items);
+                defer response.deinit(allocator);
 
-            // Extract code
-            const code = try parser.extractZigCode(allocator, response.content) orelse {
-                std.debug.print("✗ (no code)\n", .{});
-                continue;
-            };
+                problem_time_ms += response.response_time_ms;
+                total_usage.add(.{
+                    .prompt_tokens = response.usage.prompt_tokens,
+                    .completion_tokens = response.usage.completion_tokens,
+                    .total_tokens = response.usage.total_tokens,
+                });
 
-            // Write to sandbox
-            const solution_path = try sbx.writeSolution(model_dir, problem.id, code);
-            defer allocator.free(solution_path);
+                // Extract code
+                const code = try parser.extractZigCode(allocator, response.content) orelse {
+                    std.debug.print("(no code) ", .{});
+                    break; // Can't retry without code
+                };
 
-            // Run tests
-            var test_result = try sbx.runTest(solution_path, problem.test_path);
-            defer test_result.deinit();
+                // Write to sandbox
+                const solution_path = try sbx.writeSolution(model_dir, problem.id, code);
+                defer allocator.free(solution_path);
 
-            // Track best result
-            if (@intFromEnum(test_result.status) < @intFromEnum(best_status)) {
-                // Free previous best code if any
-                if (best_code) |old_code| allocator.free(old_code);
-                best_status = test_result.status;
-                best_loc = parser.countLoc(code);
-                best_code = code; // Keep ownership
-            } else {
-                allocator.free(code);
+                // Run tests
+                var test_result = try sbx.runTest(solution_path, problem.test_path);
+                defer test_result.deinit();
+
+                // Check result
+                if (test_result.status == .pass) {
+                    // Success!
+                    if (best_code) |old_code| allocator.free(old_code);
+                    best_status = .pass;
+                    best_loc = parser.countLoc(code);
+                    best_code = code;
+                    retries_used = retry;
+                    break;
+                }
+
+                // Track best result even if not pass
+                if (@intFromEnum(test_result.status) < @intFromEnum(best_status)) {
+                    if (best_code) |old_code| allocator.free(old_code);
+                    best_status = test_result.status;
+                    best_loc = parser.countLoc(code);
+                    best_code = code;
+                } else {
+                    allocator.free(code);
+                }
+
+                // If compile/test error and we have retries left, send error back to LLM
+                if (retry + 1 < MAX_RETRIES and test_result.stderr.len > 0) {
+                    std.debug.print("(retry {d}) ", .{retry + 1});
+
+                    // Add assistant's code to conversation
+                    const assistant_msg = try allocator.dupe(u8, response.content);
+                    try conversation.append(allocator, .{ .role = .assistant, .content = assistant_msg });
+
+                    // Add error feedback
+                    const error_limit = @min(test_result.stderr.len, 500);
+                    const error_msg = try std.fmt.allocPrint(allocator,
+                        \\Compilation failed with error:
+                        \\```
+                        \\{s}
+                        \\```
+                        \\Please fix the code and provide the corrected version in a ```zig code block.
+                    , .{test_result.stderr[0..error_limit]});
+                    try conversation.append(allocator, .{ .role = .user, .content = error_msg });
+                }
             }
         }
 
@@ -232,6 +274,7 @@ fn runModelBenchmark(
             .status = best_status,
             .response_time_ms = problem_time_ms,
             .loc = best_loc,
+            .retries = retries_used,
         });
     }
 

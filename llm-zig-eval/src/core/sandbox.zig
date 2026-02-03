@@ -32,26 +32,33 @@ pub const Problem = struct {
     test_path: []const u8,
 };
 
-/// The three benchmark problems
+/// Benchmark problems (simple test for now)
 pub const PROBLEMS = [_]Problem{
     .{
-        .id = "q1",
-        .name = "Arena Allocator",
-        .prompt_path = "problems/q1_memory.txt",
-        .test_path = "problems/q1_test.zig",
+        .id = "q0",
+        .name = "isPrime",
+        .prompt_path = "problems/q0_primes.txt",
+        .test_path = "problems/q0_test.zig",
     },
-    .{
-        .id = "q2",
-        .name = "Mock Socket",
-        .prompt_path = "problems/q2_concurrency.txt",
-        .test_path = "problems/q2_test.zig",
-    },
-    .{
-        .id = "q3",
-        .name = "JSON Parser",
-        .prompt_path = "problems/q3_comptime.txt",
-        .test_path = "problems/q3_test.zig",
-    },
+    // TODO: Re-enable after error retry is working
+    // .{
+    //     .id = "q1",
+    //     .name = "Arena Allocator",
+    //     .prompt_path = "problems/q1_memory.txt",
+    //     .test_path = "problems/q1_test.zig",
+    // },
+    // .{
+    //     .id = "q2",
+    //     .name = "Mock Socket",
+    //     .prompt_path = "problems/q2_concurrency.txt",
+    //     .test_path = "problems/q2_test.zig",
+    // },
+    // .{
+    //     .id = "q3",
+    //     .name = "JSON Parser",
+    //     .prompt_path = "problems/q3_comptime.txt",
+    //     .test_path = "problems/q3_test.zig",
+    // },
 };
 
 /// Sandbox for running LLM-generated code

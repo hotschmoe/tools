@@ -66,7 +66,11 @@ pub const Config = struct {
     };
 
     pub fn deinit(self: *Config) void {
+        for (self.models) |model| {
+            self.allocator.free(model);
+        }
         self.allocator.free(self.models);
+        self.allocator.free(self.api_key);
     }
 };
 
@@ -110,13 +114,23 @@ pub fn parseArgs(allocator: std.mem.Allocator) !Config {
         }
     }
 
-    // Get API key from environment
-    const api_key = std.process.getEnvVarOwned(allocator, "OPENROUTER_API_KEY") catch |err| {
-        if (err == error.EnvironmentVariableNotFound) {
-            std.debug.print("Error: OPENROUTER_API_KEY environment variable not set\n", .{});
-            return error.MissingApiKey;
+    // Get API key from environment or .env file
+    const api_key = blk: {
+        // First try environment variable
+        if (std.process.getEnvVarOwned(allocator, "OPENROUTER_API_KEY")) |key| {
+            break :blk key;
+        } else |err| {
+            if (err != error.EnvironmentVariableNotFound) {
+                return err;
+            }
         }
-        return err;
+        // Fall back to .env file
+        if (loadEnvFile(allocator, "OPENROUTER_API_KEY") catch null) |key| {
+            std.debug.print("Loaded API key from .env file\n", .{});
+            break :blk key;
+        }
+        std.debug.print("Error: OPENROUTER_API_KEY not found in environment or .env file\n", .{});
+        return error.MissingApiKey;
     };
     errdefer allocator.free(api_key);
 
@@ -133,7 +147,9 @@ pub fn parseArgs(allocator: std.mem.Allocator) !Config {
     while (it.next()) |model| {
         const trimmed = std.mem.trim(u8, model, " ");
         if (trimmed.len > 0) {
-            try model_list.append(allocator, trimmed);
+            // Duplicate to own the memory (args will be freed after parseArgs returns)
+            const owned = try allocator.dupe(u8, trimmed);
+            try model_list.append(allocator, owned);
         }
     }
 
@@ -150,6 +166,34 @@ pub fn parseArgs(allocator: std.mem.Allocator) !Config {
         .api_key = api_key,
         .allocator = allocator,
     };
+}
+
+/// Load a value from .env file
+fn loadEnvFile(allocator: std.mem.Allocator, key: []const u8) !?[]const u8 {
+    const file = std.fs.cwd().openFile(".env", .{}) catch |err| {
+        if (err == error.FileNotFound) return null;
+        return err;
+    };
+    defer file.close();
+
+    var buf: [4096]u8 = undefined;
+    const bytes_read = file.readAll(&buf) catch return null;
+    const content = buf[0..bytes_read];
+
+    var lines = std.mem.splitScalar(u8, content, '\n');
+    while (lines.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, " \t\r");
+        if (trimmed.len == 0 or trimmed[0] == '#') continue;
+
+        if (std.mem.indexOf(u8, trimmed, "=")) |eq_pos| {
+            const line_key = std.mem.trim(u8, trimmed[0..eq_pos], " \t");
+            if (std.mem.eql(u8, line_key, key)) {
+                const value = std.mem.trim(u8, trimmed[eq_pos + 1 ..], " \t\"'");
+                return try allocator.dupe(u8, value);
+            }
+        }
+    }
+    return null;
 }
 
 fn printUsage() void {
