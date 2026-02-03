@@ -167,6 +167,13 @@ fn runModelBenchmark(
             var conversation: std.ArrayList(Message) = .empty;
             defer conversation.deinit(allocator);
 
+            // Track allocated strings for cleanup
+            var allocated_msgs: std.ArrayList([]const u8) = .empty;
+            defer {
+                for (allocated_msgs.items) |msg| allocator.free(msg);
+                allocated_msgs.deinit(allocator);
+            }
+
             // Initial messages
             try conversation.append(allocator, .{ .role = .system, .content = system_prompt });
             try conversation.append(allocator, .{ .role = .user, .content = prompt });
@@ -224,6 +231,7 @@ fn runModelBenchmark(
 
                     // Add assistant's code to conversation
                     const assistant_msg = try allocator.dupe(u8, response.content);
+                    try allocated_msgs.append(allocator, assistant_msg);
                     try conversation.append(allocator, .{ .role = .assistant, .content = assistant_msg });
 
                     // Add error feedback
@@ -235,6 +243,7 @@ fn runModelBenchmark(
                         \\```
                         \\Please fix the code and provide the corrected version in a ```zig code block.
                     , .{test_result.stderr[0..error_limit]});
+                    try allocated_msgs.append(allocator, error_msg);
                     try conversation.append(allocator, .{ .role = .user, .content = error_msg });
                 }
             }
