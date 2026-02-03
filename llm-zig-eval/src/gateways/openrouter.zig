@@ -133,12 +133,12 @@ pub const Client = struct {
         const auth_header = try std.fmt.allocPrint(self.allocator, "Bearer {s}", .{self.api_key});
         defer self.allocator.free(auth_header);
 
-        // Prepare response body buffer
-        var response_body = std.ArrayList(u8).init(self.allocator);
-        errdefer response_body.deinit();
+        // Prepare response body buffer using Zig 0.15 Writer.Allocating
+        var response_writer: std.Io.Writer.Allocating = .init(self.allocator);
+        errdefer response_writer.deinit();
 
         // Use fetch API - Zig 0.15 style
-        const result = self.http_client.fetch(.{
+        const fetch_result = self.http_client.fetch(.{
             .location = .{ .url = OPENROUTER_API_URL },
             .method = .POST,
             .extra_headers = &.{
@@ -148,10 +148,10 @@ pub const Client = struct {
                 .{ .name = "X-Title", .value = "llm-zig-eval" },
             },
             .payload = body,
-            .response_writer = response_body.writer().any(),
-        }) catch |err| {
-            return err;
-        };
+            .response_writer = &response_writer.writer,
+        });
+
+        const result = try fetch_result;
 
         // Check status code
         if (result.status != .ok) {
@@ -162,7 +162,7 @@ pub const Client = struct {
             };
         }
 
-        return try response_body.toOwnedSlice();
+        return try response_writer.toOwnedSlice();
     }
 
     fn parseResponse(self: *Client, response: []const u8, response_time_ms: i64) !ChatResponse {

@@ -32,6 +32,8 @@ pub const Sandbox = sandbox.Sandbox;
 pub const SandboxResult = sandbox.SandboxResult;
 pub const Problem = sandbox.Problem;
 pub const PROBLEMS = sandbox.PROBLEMS;
+pub const Tribunal = tribunal.Tribunal;
+pub const ConsensusResult = council_types.ConsensusResult;
 
 // Tests
 test "module imports" {

@@ -14,6 +14,8 @@ const Sandbox = lib.Sandbox;
 const SandboxResult = lib.SandboxResult;
 const TokenUsage = lib.TokenUsage;
 const PROBLEMS = lib.PROBLEMS;
+const Tribunal = lib.Tribunal;
+const ConsensusResult = lib.ConsensusResult;
 
 const parser = lib.parser;
 const sandbox = lib.sandbox;
@@ -21,8 +23,15 @@ const tokens = lib.tokens;
 const config = lib.config;
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
+    var gpa = std.heap.GeneralPurposeAllocator(.{
+        .safety = true,
+    }){};
+    defer {
+        const check = gpa.deinit();
+        if (check == .leak) {
+            std.debug.print("WARNING: Memory leaks detected!\n", .{});
+        }
+    }
     const allocator = gpa.allocator();
 
     // Parse CLI arguments
@@ -59,6 +68,9 @@ pub fn main() !void {
     var report = Report.init(allocator);
     defer report.deinit();
 
+    // Initialize tribunal for council judging (if enabled)
+    var tribunal = Tribunal.init(allocator, &client);
+
     // Run benchmark for each model
     for (cfg.models) |model_id| {
         std.debug.print("\n🔄 Benchmarking: {s}\n", .{model_id});
@@ -67,30 +79,53 @@ pub fn main() !void {
             allocator,
             &client,
             &sbx,
+            &tribunal,
             model_id,
             cfg.runs,
+            cfg.council,
         );
 
         try report.addResult(model_result);
     }
 
-    // Render report
-    const stdout = std.io.getStdOut().writer();
+    // Render report to stdout
+    const stdout_file = std.fs.File.stdout();
+    var write_buf: [4096]u8 = undefined;
+    var stdout = stdout_file.writer(&write_buf);
     switch (cfg.output_format) {
-        .pretty => try report.renderTable(stdout),
-        .json => try report.renderJson(stdout),
+        .pretty => try report.renderTable(&stdout.interface),
+        .json => try report.renderJson(&stdout.interface),
     }
+    try stdout.interface.flush();
 }
+
+/// Tracks a passed solution for council judging
+const PassedSolution = struct {
+    prompt: []const u8,
+    code: []const u8,
+};
 
 fn runModelBenchmark(
     allocator: std.mem.Allocator,
     client: *Client,
     sbx: *Sandbox,
+    tribunal: *Tribunal,
     model_id: []const u8,
     runs: u32,
+    enable_council: bool,
 ) !ModelResult {
     var problem_results: std.ArrayList(ProblemResult) = .empty;
     errdefer problem_results.deinit(allocator);
+
+    // Track passed solutions for council judging
+    var passed_solutions: std.ArrayList(PassedSolution) = .empty;
+    defer {
+        for (passed_solutions.items) |sol| {
+            allocator.free(sol.prompt);
+            allocator.free(sol.code);
+        }
+        passed_solutions.deinit(allocator);
+    }
 
     var total_usage = TokenUsage.init();
     var total_time_ms: i64 = 0;
@@ -106,11 +141,12 @@ fn runModelBenchmark(
 
         // Load problem prompt
         const prompt = try sandbox.loadProblemPrompt(allocator, problem);
-        defer allocator.free(prompt);
+        errdefer allocator.free(prompt);
 
         // Best result across runs
         var best_status: SandboxResult.Status = .compile_error;
         var best_loc: usize = 0;
+        var best_code: ?[]const u8 = null;
         var problem_time_ms: i64 = 0;
 
         for (0..runs) |_| {
@@ -141,7 +177,6 @@ fn runModelBenchmark(
                 std.debug.print("✗ (no code)\n", .{});
                 continue;
             };
-            defer allocator.free(code);
 
             // Write to sandbox
             const solution_path = try sbx.writeSolution(model_dir, problem.id, code);
@@ -153,8 +188,13 @@ fn runModelBenchmark(
 
             // Track best result
             if (@intFromEnum(test_result.status) < @intFromEnum(best_status)) {
+                // Free previous best code if any
+                if (best_code) |old_code| allocator.free(old_code);
                 best_status = test_result.status;
                 best_loc = parser.countLoc(code);
+                best_code = code; // Keep ownership
+            } else {
+                allocator.free(code);
             }
         }
 
@@ -167,8 +207,24 @@ fn runModelBenchmark(
         };
         std.debug.print("{s}\n", .{status_str});
 
-        if (best_status == .pass) passed += 1;
+        if (best_status == .pass) {
+            passed += 1;
+            // Store passed solution for council judging
+            if (enable_council) {
+                if (best_code) |code| {
+                    try passed_solutions.append(allocator, .{
+                        .prompt = prompt, // Transfer ownership
+                        .code = code,
+                    });
+                    best_code = null; // Ownership transferred
+                }
+            }
+        }
         total_time_ms += problem_time_ms;
+
+        // Clean up if not transferred to council
+        if (best_code) |code| allocator.free(code);
+        if (!enable_council or best_status != .pass) allocator.free(prompt);
 
         try problem_results.append(allocator, .{
             .problem_id = problem.id,
@@ -182,6 +238,30 @@ fn runModelBenchmark(
     // Calculate cost
     const cost = tokens.calculateCost(model_id, total_usage);
 
+    // Council judging (only if enabled and we have passed solutions)
+    var rating: ?[]const u8 = null;
+    if (enable_council and passed_solutions.items.len > 0) {
+        std.debug.print("  └─ Council judging...\n", .{});
+        var total_score: f32 = 0;
+        var judged_count: u32 = 0;
+
+        for (passed_solutions.items) |sol| {
+            var consensus = tribunal.convene(sol.prompt, sol.code) catch |err| {
+                std.debug.print("    ⚠ Council error: {}\n", .{err});
+                continue;
+            };
+            defer consensus.deinit();
+            total_score += consensus.average_score;
+            judged_count += 1;
+        }
+
+        if (judged_count > 0) {
+            const avg_score = total_score / @as(f32, @floatFromInt(judged_count));
+            const rating_enum = ConsensusResult.Rating.fromScore(avg_score);
+            rating = try std.fmt.allocPrint(allocator, "{s} ({d:.1})", .{ rating_enum.toString(), avg_score });
+        }
+    }
+
     return ModelResult{
         .model_id = model_id,
         .problems = try problem_results.toOwnedSlice(allocator),
@@ -190,7 +270,7 @@ fn runModelBenchmark(
         .total_problems = @intCast(PROBLEMS.len),
         .usage = total_usage,
         .cost = cost,
-        .rating = null, // Council rating would go here
+        .rating = rating,
     };
 }
 
